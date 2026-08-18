@@ -1,0 +1,13 @@
+# Target labels
+ firmware
+# Source files and their labels
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/CMakeFiles/firmware
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/CMakeFiles/firmware.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/CMakeFiles/firmware-complete.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-build.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-configure.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-download.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-install.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-mkdir.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-patch.rule
+C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/firmware-prefix/src/firmware-stamp/firmware-update.rule

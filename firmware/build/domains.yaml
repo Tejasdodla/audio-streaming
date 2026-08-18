@@ -1,0 +1,7 @@
+default: firmware
+build_dir: C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build
+domains:
+  - name: firmware
+    build_dir: C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/firmware
+flash_order:
+  - firmware

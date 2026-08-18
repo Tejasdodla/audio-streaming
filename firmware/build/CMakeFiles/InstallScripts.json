@@ -1,0 +1,14 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/bootloader/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/modules/nrf/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/modules/mcuboot/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/boards/cmake_install.cmake",
+		"C:/Users/CID/Desktop/5th-sense/audio-streaming/firmware/build/_sysbuild/sysbuild/images/soc/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
