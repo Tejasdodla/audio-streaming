@@ -118,7 +118,7 @@ size_t jitter_buffer_pop(uint8_t *dest, size_t requested_len)
 bool jitter_buffer_is_ready_to_play(void)
 {
 	k_mutex_lock(&g_buf_mutex, K_FOREVER);
-	bool ready = (g_stats.bytes_available >= 480);
+	bool ready = (g_stats.bytes_available >= 320);
 	k_mutex_unlock(&g_buf_mutex);
 	return ready;
 }

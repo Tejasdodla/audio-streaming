@@ -25,7 +25,7 @@ class AudioStreamer(
     private val _streamStats = MutableStateFlow(StreamStats())
     val streamStats: StateFlow<StreamStats> = _streamStats.asStateFlow()
 
-    private val audioPacketQueue = Channel<ByteArray>(capacity = 4)
+    private val audioPacketQueue = Channel<ByteArray>(capacity = 32)
     private var sequenceNumber = AtomicInteger(0)
     private var senderJob: Job? = null
     private var throughputTimerJob: Job? = null
@@ -39,8 +39,19 @@ class AudioStreamer(
     private val adpcmEncoder = ImaAdpcmEncoder()
     private val oboeEngine = OboeAudioEngine(16000, 10.0)
 
+    private val sampleAccumulator = ArrayList<Short>(1024)
+    private val accumulatorLock = Any()
+
     fun startStreaming(config: AudioConfig, mode: AudioStreamMode) {
         scope.launch(Dispatchers.IO) {
+            senderJob?.cancel()
+            throughputTimerJob?.cancel()
+            while (audioPacketQueue.tryReceive().isSuccess) {}
+
+            synchronized(accumulatorLock) {
+                sampleAccumulator.clear()
+            }
+
             activeConfig = config
             lc3Encoder = Lc3Encoder(
                 sampleRateHz = config.sampleRate.hz,
@@ -59,7 +70,7 @@ class AudioStreamer(
                 streamMode = mode.modeId
             )
             bleManager.sendControlCommand(configPacket)
-            delay(20)
+            delay(25)
 
             // 2. Send Start Command
             val startPacket = BleAudioProtocol.createCommandPacket(BleAudioProtocol.CMD_START)
@@ -85,9 +96,6 @@ class AudioStreamer(
         }
     }
 
-    private val sampleAccumulator = ArrayList<Short>(1024)
-    private val accumulatorLock = Any()
-
     fun stopStreaming() {
         scope.launch(Dispatchers.IO) {
             val stopPacket = BleAudioProtocol.createCommandPacket(BleAudioProtocol.CMD_STOP)
@@ -103,17 +111,12 @@ class AudioStreamer(
             }
             oboeEngine.reset()
 
-            // Drain remaining queue
             while (audioPacketQueue.tryReceive().isSuccess) {}
 
             _streamStats.update { it.copy(isStreaming = false, kbps = 0.0) }
         }
     }
 
-    /**
-     * Enqueues a raw 16-bit PCM chunk (e.g. from Spotify capture, File decoder, or TTS)
-     * Accumulates samples and encodes in exact 10.0 ms LC3 frames (160 samples @ 16kHz, 240 @ 24kHz, 480 @ 48kHz).
-     */
     fun enqueuePcmChunk(pcmData: ByteArray, length: Int = pcmData.size) {
         val totalSamples = length / 2
         if (totalSamples == 0) return
@@ -124,7 +127,6 @@ class AudioStreamer(
             .asShortBuffer()
             .get(incomingShorts)
 
-        // Ensure sender loop and throughput monitor are running
         if (senderJob == null || senderJob?.isActive != true) {
             startSenderLoop()
             startThroughputMonitor()
@@ -166,7 +168,6 @@ class AudioStreamer(
                     )
                     framesToSend.add(packet)
                 } else {
-                    // Raw PCM
                     val pcmBytes = ByteArray(samplesPerFrame * 2)
                     for (i in 0 until samplesPerFrame) {
                         pcmBytes[i * 2] = (frameSamples[i].toInt() and 0xFF).toByte()
@@ -187,7 +188,7 @@ class AudioStreamer(
         }
     }
 
-    fun startSenderLoop() {
+    private fun startSenderLoop() {
         senderJob?.cancel()
         senderJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -207,7 +208,7 @@ class AudioStreamer(
                     }
                 }
 
-                // 10.0 ms of audio per LC3 frame. Pace transmission at 9.5 ms to stay ahead of DAC without backlog.
+                // Pace at 9.5 ms (stays ahead of 10.0 ms DAC output without overflow)
                 delay(9)
             }
         }

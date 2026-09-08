@@ -10,6 +10,7 @@ import com.fifthsense.audiostream.ble.BleManager
 import com.fifthsense.audiostream.model.AudioConfig
 import com.fifthsense.audiostream.model.AudioStreamMode
 import com.fifthsense.audiostream.model.BleAudioDevice
+import com.fifthsense.audiostream.model.BleConnectionState
 import com.fifthsense.audiostream.model.FileAudioItem
 import com.fifthsense.audiostream.model.SampleRate
 import com.fifthsense.audiostream.model.StreamStats
@@ -32,6 +33,16 @@ class AudioStreamViewModel(
     val isScanning = bleManager.isScanning
     val connectionState = bleManager.connectionState
     val connectedDevice = bleManager.connectedDevice
+
+    init {
+        viewModelScope.launch {
+            bleManager.connectionState.collect { state ->
+                if (state == BleConnectionState.DISCONNECTED) {
+                    stopAllStreaming()
+                }
+            }
+        }
+    }
 
     // Merge BLE sink telemetry and local transmitter metrics
     val streamStats: StateFlow<StreamStats> = combine(
@@ -160,6 +171,7 @@ class AudioStreamViewModel(
     fun playFile() {
         val track = _currentTrack.value ?: _playlist.value.firstOrNull() ?: return
         _currentTrack.value = track
+        stopAllStreaming()
         audioStreamer.startStreaming(
             config = _audioConfig.value,
             mode = AudioStreamMode.FILE_STREAM
@@ -204,6 +216,7 @@ class AudioStreamViewModel(
 
     fun speakTts() {
         if (_ttsText.value.isNotBlank()) {
+            stopAllStreaming()
             audioStreamer.startStreaming(
                 config = _audioConfig.value,
                 mode = AudioStreamMode.TTS_ENGINE
@@ -218,8 +231,9 @@ class AudioStreamViewModel(
     }
 
     private fun stopAllStreaming() {
-        stopFile()
-        setSystemAudioCapturing(false)
-        stopTts()
+        fileDecoder.stop()
+        ttsEngine.stop()
+        _isCapturingSystemAudio.value = false
+        audioStreamer.stopStreaming()
     }
 }

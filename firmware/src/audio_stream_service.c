@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 5th Sense
- * BLE Custom Audio GATT Streaming Service Implementation
+ * Bluetooth LE Audio Streaming GATT Service
  */
 
 #include "audio_stream_service.h"
@@ -10,50 +10,49 @@
 #include "flash_storage.h"
 #include "main.h"
 #include <zephyr/kernel.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/logging/log.h>
+#include <string.h>
 
-LOG_MODULE_REGISTER(audio_stream_svc, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(audio_svc, LOG_LEVEL_INF);
 
-/* Current BLE Connection */
-static struct bt_conn *g_current_conn = NULL;
-static bool g_stats_notify_enabled = false;
-
-/* UUID definitions */
+/* Custom 128-bit UUIDs */
 static struct bt_uuid_128 audio_svc_uuid = BT_UUID_INIT_128(BT_UUID_AUDIO_SERVICE_VAL);
 static struct bt_uuid_128 audio_data_uuid = BT_UUID_INIT_128(BT_UUID_AUDIO_DATA_CHAR_VAL);
 static struct bt_uuid_128 audio_ctrl_uuid = BT_UUID_INIT_128(BT_UUID_AUDIO_CTRL_CHAR_VAL);
 static struct bt_uuid_128 audio_stats_uuid = BT_UUID_INIT_128(BT_UUID_AUDIO_STATS_CHAR_VAL);
 
-/* GATT Callbacks forward declarations */
+static struct bt_conn *g_current_conn = NULL;
+static bool g_stats_notify_enabled = false;
+
+/* Forward declarations */
 static ssize_t write_audio_data(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-
 static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-
 static ssize_t read_audio_stats(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				void *buf, uint16_t len, uint16_t offset);
-
 static void stats_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value);
 
 /* GATT Service Definition */
 BT_GATT_SERVICE_DEFINE(audio_svc,
 	BT_GATT_PRIMARY_SERVICE(&audio_svc_uuid),
 
-	/* 1. AUDIO DATA CHARACTERISTIC (Write Without Response) */
+	/* Audio Data Characteristic: Write Without Response */
 	BT_GATT_CHARACTERISTIC(&audio_data_uuid.uuid,
 			       BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_WRITE,
 			       BT_GATT_PERM_WRITE,
 			       NULL, write_audio_data, NULL),
 
-	/* 2. AUDIO CONTROL CHARACTERISTIC (Write & Notify) */
+	/* Audio Control Characteristic: Write & Write Without Response */
 	BT_GATT_CHARACTERISTIC(&audio_ctrl_uuid.uuid,
-			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
 			       BT_GATT_PERM_WRITE,
 			       NULL, write_audio_ctrl, NULL),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 
-	/* 3. AUDIO STATS CHARACTERISTIC (Read & Notify) */
+	/* Audio Stats Characteristic: Read & Notify */
 	BT_GATT_CHARACTERISTIC(&audio_stats_uuid.uuid,
 			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ,
@@ -145,32 +144,32 @@ static ssize_t write_audio_data(struct bt_conn *conn, const struct bt_gatt_attr 
 				g_seq_initialized = true;
 			}
 		} else if (hdr.codec == AUDIO_CODEC_ADPCM) {
-			/* Decode 4-bit IMA-ADPCM into 16-bit linear PCM (2 samples per byte) */
-			static int16_t s_adpcm_pcm[256];
-			size_t samples_decoded = adpcm_decode_frame(payload, payload_len,
-			                                            hdr.init_pred, hdr.init_index,
-			                                            s_adpcm_pcm);
-			if (samples_decoded > 0) {
-				jitter_buffer_push((const uint8_t *)s_adpcm_pcm,
-				                   samples_decoded * sizeof(int16_t),
-				                   hdr.seq_num);
+			if (payload_len >= 3) {
+				int16_t init_pred = (int16_t)((uint16_t)payload[0] | ((uint16_t)payload[1] << 8));
+				int8_t init_idx = (int8_t)payload[2];
+				const uint8_t *adpcm_stream = payload + 3;
+				size_t adpcm_len = payload_len - 3;
+
+				static struct ima_adpcm_state s_adpcm_state;
+				ima_adpcm_init_state(&s_adpcm_state, init_pred, init_idx);
+
+				static int16_t s_pcm_buf[512];
+				size_t num_samples = adpcm_len * 2;
+				if (num_samples > 512) num_samples = 512;
+
+				ima_adpcm_decode_block(&s_adpcm_state, adpcm_stream, adpcm_len, s_pcm_buf);
+				jitter_buffer_push((const uint8_t *)s_pcm_buf, num_samples * sizeof(int16_t), hdr.seq_num);
 			}
 		} else {
-			/* Raw PCM fallback */
+			/* Linear PCM */
 			jitter_buffer_push(payload, payload_len, hdr.seq_num);
 		}
-
-		/* Ensure I2S is active */
-		if (!audio_i2s_is_active()) {
-			audio_i2s_start();
-		}
-		main_set_playback_led(true);
 	}
 
 	return len;
 }
 
-/* Callback when client writes control commands */
+/* Callback when client writes to control characteristic */
 static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
@@ -192,6 +191,7 @@ static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr 
 	case AUDIO_CMD_START:
 		jitter_buffer_reset();
 		g_seq_initialized = false;
+		g_expected_seq_num = 0;
 		if (g_lc3_decoder) lc3_decoder_reset(g_lc3_decoder);
 		audio_i2s_start();
 		main_set_playback_led(true);
@@ -202,6 +202,7 @@ static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr 
 		audio_i2s_stop();
 		jitter_buffer_reset();
 		g_seq_initialized = false;
+		g_expected_seq_num = 0;
 		if (g_lc3_decoder) lc3_decoder_reset(g_lc3_decoder);
 		main_set_playback_led(false);
 		LOG_INF("Playback stopped by client");
@@ -230,6 +231,7 @@ static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr 
 			audio_i2s_configure(cfg.sample_rate, cfg.channels, cfg.bit_depth);
 			jitter_buffer_reset();
 			g_seq_initialized = false;
+			g_expected_seq_num = 0;
 			audio_i2s_start();
 		}
 		break;
@@ -258,6 +260,7 @@ static ssize_t write_audio_ctrl(struct bt_conn *conn, const struct bt_gatt_attr 
 	return len;
 }
 
+/* Callback when client reads stats characteristic */
 static ssize_t read_audio_stats(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				void *buf, uint16_t len, uint16_t offset)
 {
@@ -287,28 +290,46 @@ static void stats_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t valu
 
 int audio_stream_service_init(void)
 {
+	ensure_lc3_decoder(16000);
 	LOG_INF("Audio Stream GATT Service registered");
 	return 0;
 }
 
 void audio_stream_service_on_connected(struct bt_conn *conn)
 {
-	if (!g_current_conn) {
-		g_current_conn = bt_conn_ref(conn);
-		LOG_INF("Client connected to Audio Service");
+	if (g_current_conn) {
+		bt_conn_unref(g_current_conn);
+		g_current_conn = NULL;
 	}
+	g_current_conn = bt_conn_ref(conn);
+	g_stats_notify_enabled = false;
+	g_seq_initialized = false;
+	g_expected_seq_num = 0;
+	jitter_buffer_reset();
+	if (g_lc3_decoder) {
+		lc3_decoder_reset(g_lc3_decoder);
+	}
+	main_set_playback_led(false);
+	LOG_INF("Client connected to Audio Service (Session Cleaned)");
 }
 
 void audio_stream_service_on_disconnected(struct bt_conn *conn)
 {
-	if (g_current_conn == conn) {
+	ARG_UNUSED(conn);
+	if (g_current_conn) {
 		bt_conn_unref(g_current_conn);
 		g_current_conn = NULL;
-		g_stats_notify_enabled = false;
-		audio_i2s_stop();
-		jitter_buffer_reset();
-		LOG_INF("Client disconnected from Audio Service");
 	}
+	g_stats_notify_enabled = false;
+	g_seq_initialized = false;
+	g_expected_seq_num = 0;
+	audio_i2s_stop();
+	jitter_buffer_reset();
+	if (g_lc3_decoder) {
+		lc3_decoder_reset(g_lc3_decoder);
+	}
+	main_set_playback_led(false);
+	LOG_INF("Client disconnected from Audio Service (Session Reset)");
 }
 
 int audio_stream_service_send_stats(void)
@@ -329,6 +350,5 @@ int audio_stream_service_send_stats(void)
 		.is_playing = audio_i2s_is_active() ? 1 : 0
 	};
 
-	/* Send notification using UUID lookup across registered service attributes */
 	return bt_gatt_notify_uuid(g_current_conn, &audio_stats_uuid.uuid, audio_svc.attrs, &payload, sizeof(payload));
 }
